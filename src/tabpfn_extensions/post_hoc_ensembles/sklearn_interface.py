@@ -74,7 +74,9 @@ class AutoTabPFNBase(BaseEstimator):
     n_ensemble_models : int, default=5
         The number of random TabPFN configurations to generate and include in the
         AutoGluon model zoo for ensembling. TabArena used 200 models for their final
-        evaluation.
+        evaluation. In the case of a single model, the model is not ensembled and the
+        model is fitted with the default hyperparameters (with optional `n_estimators`
+        and `ignore_pretraining_limits` parameters).
     n_estimators : int, default=8
         The number of internal transformers to ensemble within each individual TabPFN model.
         Higher values can improve performance but increase resource usage.
@@ -151,9 +153,9 @@ class AutoTabPFNBase(BaseEstimator):
         categorical_feature_indices: list[int] | None = None,
     ) -> tuple[pd.DataFrame | np.ndarray, pd.Series | np.ndarray]:
         self.device_ = infer_device_and_type(self.device)
-        if self.n_ensemble_models <= 1:
+        if self.n_ensemble_models < 1:
             raise ValueError(
-                f"n_ensemble_models must be > 1, got {self.n_ensemble_models}"
+                f"n_ensemble_models must be >= 1, got {self.n_ensemble_models}"
             )
         if self.max_time is not None and self.max_time <= 0:
             raise ValueError("max_time must be a positive integer or None.")
@@ -223,17 +225,25 @@ class AutoTabPFNBase(BaseEstimator):
         # Generate hyperparameter configurations for TabPFN Ensemble
 
         task_type = "multiclass" if self._is_classifier else "regression"
-        rng = check_random_state(self.random_state)
-        seed = rng.randint(np.iinfo(np.int32).max)
 
-        tabpfn_configs = search_space_func(
-            task_type=task_type,
-            n_ensemble_models=self.n_ensemble_models,
-            n_estimators=self.n_estimators,
-            ignore_pretraining_limits=self.ignore_pretraining_limits,
-            seed=seed,
-            **self.get_task_args_(),
-        )
+        if self.n_ensemble_models > 1:
+            rng = check_random_state(self.random_state)
+            seed = rng.randint(np.iinfo(np.int32).max)
+
+            tabpfn_configs = search_space_func(
+                task_type=task_type,
+                n_ensemble_models=self.n_ensemble_models,
+                n_estimators=self.n_estimators,
+                ignore_pretraining_limits=self.ignore_pretraining_limits,
+                seed=seed,
+                **self.get_task_args_(),
+            )
+        else:
+            tabpfn_configs = {
+                "n_estimators": self.n_estimators,
+                "ignore_pretraining_limits": self.ignore_pretraining_limits,
+                **self.get_task_args_(),
+            }
         hyperparameters = {TabPFNV2Model: tabpfn_configs}
 
         # Set GPU count
