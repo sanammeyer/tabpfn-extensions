@@ -7,6 +7,7 @@ import logging
 import os
 import warnings
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeVar
 
 import numpy as np
@@ -44,8 +45,21 @@ try:
 except ImportError:
     # Fallback for environments without tabpfn package, in these environments
     # prediction uses the API client, so we can just return "cpu"
+
+    # torch device mock dataclass
+    @dataclass
+    class DeviceType:
+        type: str
+
     def infer_device_and_type(device: Literal["cpu", "cuda", "auto"]):
-        return "cpu"
+        if device in ("cuda"):
+            warnings.warn(
+                "CUDA device requested but 'tabpfn' package not found. "
+                "Falling back to CPU as the client-based API does not support GPU.",
+                UserWarning,
+                stacklevel=2,
+            )
+        return DeviceType(type="cpu")
 
 
 USE_TABPFN_LOCAL = os.getenv("USE_TABPFN_LOCAL", "true").lower() == "true"
