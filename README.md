@@ -9,12 +9,27 @@
 ![Last Commit](https://img.shields.io/github/last-commit/automl/tabpfn-client)
 [![colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PriorLabs/TabPFN/blob/main/examples/notebooks/TabPFN_Demo_Local.ipynb)
 
+> [!WARNING]
+>
+> #### 🧪 Experimental Code Notice
+> Please note that the extensions in this repository are experimental.
+> -   They are less rigorously tested than the core `tabpfn` library.
+> -   APIs are subject to change without notice in future releases.    
+> We welcome your feedback and contributions to help improve and stabilize them!
+
 ## Interactive Notebook Tutorial
 > [!TIP]
 >
 > Dive right in with our interactive Colab notebook! It's the best way to get a hands-on feel for TabPFN, walking you through installation, classification, and regression examples.
 >
 > [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PriorLabs/TabPFN/blob/main/examples/notebooks/TabPFN_Demo_Local.ipynb)
+
+## ⚙️ Installation
+
+```bash
+# Clone and install the repository
+pip install "tabpfn-extensions[all] @ git+https://github.com/PriorLabs/tabpfn-extensions.git"
+```
 
 ## 🛠️ Available Extensions
 
@@ -28,13 +43,6 @@
 - **embedding**: Get TabPFNs internal dense sample embeddings
 
 Detailed documentation for each extension is available in the respective module directories.
-
-## ⚙️ Installation
-
-```bash
-# Clone and install the repository
-pip install "tabpfn-extensions[all] @ git+https://github.com/PriorLabs/tabpfn-extensions.git"
-```
 
 ### 🔄 Backend Options
 
