@@ -11,6 +11,13 @@
 
 <img src="tabpfn_summary.webp" width="650" alt="TabPFN Summary">
 
+## Interactive Notebook Tutorial
+> [!TIP]
+>
+> Dive right in with our interactive Colab notebook! It's the best way to get a hands-on feel for TabPFN, walking you through installation, classification, and regression examples.
+>
+> [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PriorLabs/TabPFN/blob/main/examples/notebooks/TabPFN_Demo_Local.ipynb)
+
 ## 🛠️ Available Extensions
 
 - **post_hoc_ensembles**: Improve performance with model combination
