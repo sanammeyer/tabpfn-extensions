@@ -9,8 +9,6 @@
 ![Last Commit](https://img.shields.io/github/last-commit/automl/tabpfn-client)
 [![colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PriorLabs/TabPFN/blob/main/examples/notebooks/TabPFN_Demo_Local.ipynb)
 
-<img src="tabpfn_summary.webp" width="650" alt="TabPFN Summary">
-
 ## Interactive Notebook Tutorial
 > [!TIP]
 >
@@ -59,7 +57,7 @@ Choose the backend that fits your needs - most extensions work with either optio
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 
-## 📊 PriorLabs TabPFN Workflow
+## 📊 TabPFN Workflow
 ```mermaid
 ---
 config:
@@ -202,21 +200,6 @@ FAST_TEST_MODE=1 pytest tests/test_your_extension.py -v
 See our [Contribution Guide](CONTRIBUTING.md) for more details.
 
 [![Contributors](https://contrib.rocks/image?repo=priorlabs/tabpfn-extensions)](https://github.com/priorlabs/tabpfn-extensions/graphs/contributors)
-
-## 📦 Repository Structure
-
-Each extension lives in its own subpackage:
-
-```
-tabpfn-extensions/
-├── src/
-│   └── tabpfn_extensions/
-│       └── your_package/      # Extension implementation
-├── examples/
-│   └── your_package/          # Usage examples
-└── tests/
-    └── your_package/          # Tests
-```
 
 ---
 
