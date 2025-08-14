@@ -42,14 +42,14 @@ class AutoTabPFNBase(BaseEstimator):
 
     Parameters
     ----------
-    max_time : int | None, default=360
+    max_time : int | None, default=3600
         Maximum time in seconds to train the ensemble. If `None`, training will run until
         all models are fitted.
     eval_metric : str | None, default=None
         The evaluation metric for AutoGluon to optimize. If `None`, a default metric
         is chosen based on the problem type (e.g., 'accuracy' for classification).
         For a full list of options, see the AutoGluon documentation.
-    presets : list[str] | str | None, default=None
+    presets : list[str] | str | None, default="best_quality"
         AutoGluon preset to control the quality-time trade-off.
     device : {"cpu", "cuda", "auto"}, default="auto"
         The device to use for training. "auto" will select "cuda" if available, otherwise "cpu".
@@ -95,9 +95,9 @@ class AutoTabPFNBase(BaseEstimator):
     def __init__(
         self,
         *,
-        max_time: int | None = 360,
+        max_time: int | None = 3600,
         eval_metric: str | None = None,
-        presets: list[str] | str | None = None,
+        presets: list[str] | str | None = "best_quality",
         device: Literal["cpu", "cuda", "auto"] = "auto",
         random_state: int | None | np.random.RandomState = None,
         phe_init_args: dict | None = None,
@@ -124,7 +124,7 @@ class AutoTabPFNBase(BaseEstimator):
     def _get_predictor_init_args(self) -> dict[str, Any]:
         """Constructs the initialization arguments for AutoGluon's TabularPredictor."""
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_args = {"verbosity": 2, "path": f"TabPFNModels/m-{timestamp}"}
+        default_args = {"verbosity": 1, "path": f"TabPFNModels/m-{timestamp}"}
         user_args = self.phe_init_args or {}
         return {**default_args, **user_args}
 
@@ -165,7 +165,6 @@ class AutoTabPFNBase(BaseEstimator):
             original_columns = feature_names or [f"f{i}" for i in range(X.shape[1])]
             X = pd.DataFrame(X, columns=original_columns)
 
-        self.n_features_in_ = X.shape[1]
         self.feature_names_in_ = X.columns.to_numpy(dtype=object)
 
         # Auto-detect if still not specified and store in a new "fitted" attribute
@@ -274,11 +273,11 @@ class AutoTabPFNClassifier(ClassifierMixin, AutoTabPFNBase):
 
     Parameters
     ----------
-    max_time : int | None, default=360
+    max_time : int | None, default=3600
         Maximum time in seconds to train the ensemble.
     eval_metric : str | None, default=None
         Metric for AutoGluon to optimize. Defaults to 'accuracy'.
-    presets : list[str] | str | None, default=None
+    presets : list[str] | str | None, default="best_quality"
         AutoGluon preset to control the quality-time trade-off.
     device : {"cpu", "cuda", "auto"}, default="auto"
         Device for training. "auto" selects "cuda" if available.
@@ -318,9 +317,9 @@ class AutoTabPFNClassifier(ClassifierMixin, AutoTabPFNBase):
     def __init__(
         self,
         *,
-        max_time: int | None = 360,
+        max_time: int | None = 3600,
         eval_metric: str | None = None,
-        presets: list[str] | str | None = None,
+        presets: list[str] | str | None = "best_quality",
         device: Literal["cpu", "cuda", "auto"] = "auto",
         random_state: int | None | np.random.RandomState = None,
         phe_init_args: dict | None = None,
@@ -370,6 +369,8 @@ class AutoTabPFNClassifier(ClassifierMixin, AutoTabPFNBase):
         y_encoded = self.label_encoder_.fit_transform(y)
         self.classes_ = self.label_encoder_.classes_
 
+        self.n_features_in_ = X.shape[1]
+
         # Single class case - special handling
         if len(self.classes_) == 1:
             self.single_class_ = True
@@ -385,12 +386,6 @@ class AutoTabPFNClassifier(ClassifierMixin, AutoTabPFNBase):
     def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
         check_is_fitted(self)
 
-        if X.shape[1] != self.n_features_in_:
-            raise ValueError(
-                f"X has {X.shape[1]} features, but {self.__class__.__name__} "
-                f"is expecting {self.n_features_in_} features as input."
-            )
-
         if hasattr(self, "single_class_") and self.single_class_:
             return np.full(X.shape[0], self.single_class_value_)
 
@@ -400,12 +395,6 @@ class AutoTabPFNClassifier(ClassifierMixin, AutoTabPFNBase):
 
     def predict_proba(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
         check_is_fitted(self)
-
-        if X.shape[1] != self.n_features_in_:
-            raise ValueError(
-                f"X has {X.shape[1]} features, but {self.__class__.__name__} "
-                f"is expecting {self.n_features_in_} features as input."
-            )
 
         if hasattr(self, "single_class_") and self.single_class_:
             # Return correct (n_samples, n_classes) shape
@@ -436,11 +425,11 @@ class AutoTabPFNRegressor(RegressorMixin, AutoTabPFNBase):
 
     Parameters
     ----------
-    max_time : int | None, default=360
+    max_time : int | None, default=3600
         Maximum time in seconds to train the ensemble.
     eval_metric : str | None, default=None
         Metric for AutoGluon to optimize. Defaults to 'root_mean_squared_error'.
-    presets : list[str] | str | None, default=None
+    presets : list[str] | str | None, default="best_quality"
         AutoGluon preset to control the quality-time trade-off.
     device : {"cpu", "cuda", "auto"}, default="auto"
         Device for training. "auto" selects "cuda" if available.
@@ -475,9 +464,9 @@ class AutoTabPFNRegressor(RegressorMixin, AutoTabPFNBase):
     def __init__(
         self,
         *,
-        max_time: int | None = 360,
+        max_time: int | None = 3600,
         eval_metric: str | None = None,
-        presets: list[str] | str | None = None,
+        presets: list[str] | str | None = "best_quality",
         device: Literal["cpu", "cuda", "auto"] = "auto",
         random_state: int | None | np.random.RandomState = None,
         phe_init_args: dict | None = None,
@@ -528,12 +517,6 @@ class AutoTabPFNRegressor(RegressorMixin, AutoTabPFNBase):
 
     def predict(self, X: pd.DataFrame | np.ndarray) -> np.ndarray:
         check_is_fitted(self)
-
-        if X.shape[1] != self.n_features_in_:
-            raise ValueError(
-                f"X has {X.shape[1]} features, but {self.__class__.__name__} "
-                f"is expecting {self.n_features_in_} features as input."
-            )
 
         preds = self.predictor_.predict(pd.DataFrame(X, columns=self._column_names))
         return preds.to_numpy()
