@@ -5,13 +5,6 @@ This example demonstrates how to:
 - Extract row embeddings from TabPFNv2
 - Train a Pairwise Discriminative Learning of Classes (PDLC) head on pairs of embeddings
 - Predict labels for the test set by aggregating pairwise "same-class" scores per class
-
-Requirements:
-- Full TabPFN package (pip install tabpfn)
-- scikit-learn, numpy, torch
-
-Notes:
-- The TabPFN client (tabpfn-client) does not provide embeddings. Ensure the full package is installed.
 """
 
 from __future__ import annotations
@@ -43,6 +36,24 @@ from tabpfn_extensions.embedding import TabPFNEmbedding
 
 
 from pdll import PairwiseDifferenceClassifier
+
+
+def resolve_device(device_arg: str | torch.device | None = "auto") -> torch.device:
+    """Resolve a single torch.device based on availability and user preference.
+
+    - If `device_arg` is a `torch.device`, return it.
+    - If `device_arg` is "auto" or None: prefer CUDA, then MPS, else CPU.
+    - If `device_arg` is a string like "cpu", "cuda", or "mps": use it.
+    """
+    if isinstance(device_arg, torch.device):
+        return device_arg
+    if device_arg is None or str(device_arg).lower() == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    return torch.device(str(device_arg))
 
 
 def ensure_embeddings_2d(emb: np.ndarray, n_samples_expected: int) -> np.ndarray:
@@ -107,60 +118,6 @@ def _preprocess_frame_to_numeric(
             X_proc[:, i] = codes.astype(np.float32)
             cat_idx.append(i)
     return X_proc, cat_idx
-
-
-def resolve_openml_dataset_id(name_or_id: str) -> int:
-    try:
-        return int(name_or_id.split(":", 1)[0])
-    except Exception:
-        pass
-    name = name_or_id
-    version = 1
-    if ":" in name_or_id:
-        parts = name_or_id.split(":", 1)
-        name = parts[0]
-        try:
-            version = int(parts[1])
-        except Exception:
-            version = 1
-    ds = openml.datasets.get_dataset(name=name, version=version)
-    return ds.dataset_id
-
-
-def find_classification_task_for_dataset(dataset_id: int, folds: int = 10) -> int:
-    df = openml.tasks.list_tasks(output_format="dataframe", size=None)
-    df = df[(df["did"] == dataset_id)]
-    if "task_type" in df.columns:
-        df = df[df["task_type"].str.contains("Supervised Classification", na=False)]
-    elif "task_type_id" in df.columns:
-        df = df[df["task_type_id"] == 1]
-    if "NumberOfFolds" in df.columns:
-        df = df[df["NumberOfFolds"] == folds]
-    if "NumberOfRepeats" in df.columns:
-        df = df.sort_values(["NumberOfRepeats"], ascending=[True])
-    if df.empty:
-        raise ValueError(f"No OpenML classification task with {folds}-folds for dataset {dataset_id}")
-    return int(df.iloc[0]["tid"])
-
-
-def load_openml_task_data(task_id: int) -> tuple[np.ndarray, np.ndarray, List[int], LabelEncoder, object]:
-    task = openml.tasks.get_task(task_id)
-    res = task.get_X_and_y(dataset_format="dataframe")
-    if isinstance(res, tuple):
-        if len(res) >= 2:
-            X, y = res[0], res[1]
-        else:
-            raise ValueError("Unexpected return from task.get_X_and_y")
-    else:
-        # Some older APIs may return only X; not expected for classification tasks
-        raise ValueError("task.get_X_and_y did not return (X, y)")
-    if not isinstance(X, pd.DataFrame):
-        X = pd.DataFrame(X)
-    y = pd.Series(y)
-    le = LabelEncoder()
-    y_num = le.fit_transform(y)
-    X_num, cat_idx = _preprocess_frame_to_numeric(X)
-    return X_num, y_num, cat_idx, le, task
 
 
 def load_openml_dataset(
@@ -235,9 +192,6 @@ def load_openml_dataset(
     return X_train, X_test, y_train, y_test, le, cat_idx
 
 
-@dataclass
-class PairSamplingConfig:
-    n_pairs: int = 50000
 
 
 class EmbeddingPairsDataset(torch.utils.data.Dataset):
@@ -252,23 +206,19 @@ class EmbeddingPairsDataset(torch.utils.data.Dataset):
         self,
         E: np.ndarray,  # (N, D)
         y: np.ndarray,  # (N,)
-        cfg: PairSamplingConfig,
-        rng: np.random.Generator | None = None,
     ) -> None:
         assert E.ndim == 2
         assert E.shape[0] == y.shape[0]
         self.E = E.astype(np.float32, copy=False)
         self.y = y
-        self.cfg = cfg
-        self.rng = np.random.default_rng() if rng is None else rng
         self.N = E.shape[0]
 
     def __len__(self) -> int:
-        return int(self.cfg.n_pairs)
+        return self.N * self.N
 
-    def __getitem__(self, _: int):
-        i = int(self.rng.integers(0, self.N))
-        j = int(self.rng.integers(0, self.N))
+    def __getitem__(self,idx):
+        i = idx//self.N
+        j = idx%self.N
         e1 = torch.from_numpy(self.E[i])
         e2 = torch.from_numpy(self.E[j])
         t = torch.tensor([float(self.y[i] != self.y[j])], dtype=torch.float32)  # 1=different, 0=same
@@ -305,10 +255,16 @@ class PDLCHead(nn.Module):
         return self.net(x)  # (B, 1)
 
 
+def pair_counts(y):
+    _, counts = np.unique(y, return_counts=True)
+    n_same = int((counts**2).sum())
+    N = int(counts.sum())
+    n_diff = N*N - n_same
+    return n_same, n_diff
+
 def train_pdlc_head(
     E_train: np.ndarray,
     y_train: np.ndarray,
-    n_pairs: int = 50000,
     batch_size: int = 1024,
     epochs: int = 10,
     lr: float = 1e-3,
@@ -318,9 +274,7 @@ def train_pdlc_head(
 ) -> PDLCHead:
     E_train = E_train.astype(np.float32, copy=False)
     emb_dim = E_train.shape[1]
-    device = torch.device(device) if device is not None else (
-        torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-    )
+    device = resolve_device(device)
 
     # Deterministic sampling and shuffling
     if seed is not None:
@@ -330,8 +284,8 @@ def train_pdlc_head(
     if seed is not None:
         gen.manual_seed(seed)
 
-    cfg = PairSamplingConfig(n_pairs=n_pairs)
-    dataset = EmbeddingPairsDataset(E_train, y_train, cfg, rng=np.random.default_rng(seed))
+    dataset = EmbeddingPairsDataset(E_train, y_train)
+    num_pairs = len(dataset)
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -343,6 +297,8 @@ def train_pdlc_head(
 
     model = PDLCHead(emb_dim=emb_dim, dropout=0.1).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    n_same, n_diff = pair_counts(y_train)
+    pos_weight = torch.tensor([n_same/max(1, n_diff)], dtype=torch.float32, device=device)
     loss_fn = nn.BCEWithLogitsLoss()  # target: 1=different, 0=same to match PDLL
 
     model.train()
@@ -377,6 +333,8 @@ def predict_pdlc(
     E_test: np.ndarray,
     device: str | torch.device | None = None,
     batch_train: int = 4096,
+    use_prior: bool | str = "auto",
+    anchor_weights: np.ndarray | None = None,
 ) -> np.ndarray:
     """Predict class labels for test embeddings using PDLC aggregation.
 
@@ -384,9 +342,7 @@ def predict_pdlc(
     Aggregate sigmoid(logit) scores per class and pick the max-mean class.
     To improve symmetry, average scores for (e_t, e_i) and (e_i, e_t).
     """
-    device = torch.device(device) if device is not None else (
-        torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
-    )
+    device = resolve_device(device)
     model = model.to(device).eval()
 
     E_train_t = torch.from_numpy(E_train.astype(np.float32, copy=False)).to(device)
@@ -397,6 +353,35 @@ def predict_pdlc(
     for c in classes:
         class_to_mask[int(c)] = torch.tensor(y_train == c, device=device)
 
+    # Map labels to contiguous [0..C-1] indices for vector ops
+    class_to_idx = {int(c): i for i, c in enumerate(classes)}
+    anchor_class_idx = np.array([class_to_idx[int(c)] for c in y_train], dtype=np.int64)
+    anchor_class_idx_t = torch.tensor(anchor_class_idx, device=device, dtype=torch.long)
+
+    # Priors per class in classes-order
+    _, counts = np.unique(y_train, return_counts=True)
+    priors_np = counts.astype(np.float64) / float(counts.sum())
+    priors_t = torch.tensor(priors_np, device=device, dtype=torch.float32)
+
+    # Decide whether to apply prior-adjustment (pdll 'use_prior' behavior)
+    if isinstance(use_prior, str) and use_prior.lower() == "auto":
+        use_prior_flag = bool(counts.min() < 5)
+    else:
+        use_prior_flag = bool(use_prior)
+
+    # Anchor weights (length N), default uniform and normalized
+    N_train = E_train.shape[0]
+    if anchor_weights is None:
+        w_np = np.full(N_train, 1.0 / max(1, N_train), dtype=np.float64)
+    else:
+        w_np = np.asarray(anchor_weights, dtype=np.float64)
+        assert w_np.shape[0] == N_train, f"anchor_weights length {w_np.shape[0]} != {N_train}"
+        # Clip negatives, renormalize
+        w_np = np.clip(w_np, 0.0, None)
+        s = float(w_np.sum())
+        w_np = w_np / s if s > 0 else np.full(N_train, 1.0 / max(1, N_train), dtype=np.float64)
+    w_t = torch.tensor(w_np.astype(np.float32), device=device)
+
     preds: List[int] = []
     sigmoid = nn.Sigmoid()
 
@@ -404,8 +389,11 @@ def predict_pdlc(
         e_t = E_test_t[t_idx : t_idx + 1]  # (1, D)
 
         # We'll compute scores in blocks over training set to limit memory
-        per_class_scores_sum = {int(c): 0.0 for c in classes}
-        per_class_counts = {int(c): 0 for c in classes}
+        if use_prior_flag:
+            test_class_scores = torch.zeros(len(classes), device=device, dtype=torch.float32)
+        else:
+            per_class_scores_sum = {int(c): 0.0 for c in classes}
+            per_class_weight_sum = {int(c): 0.0 for c in classes}
 
         num_train = E_train_t.shape[0]
         n_blocks = int(math.ceil(num_train / batch_train))
@@ -418,20 +406,43 @@ def predict_pdlc(
             logits1 = model(e_t.expand(block.shape[0], -1), block)  # (B, 1)
             logits2 = model(block, e_t.expand(block.shape[0], -1))
             p_diff = 0.5 * (sigmoid(logits1) + sigmoid(logits2)).squeeze(1)  # (B,)
-            probs = 1.0 - p_diff  # similarity = P(same) = 1 - P(different)
+            p_same = 1.0 - p_diff  # similarity = P(same) = 1 - P(different)
 
-            # Aggregate per class
-            for c in classes:
-                mask = class_to_mask[int(c)][s:e]
-                if mask.any():
-                    score = probs[mask].sum().item()
-                    cnt = int(mask.sum().item())
-                    per_class_scores_sum[int(c)] += score
-                    per_class_counts[int(c)] += cnt
+            if use_prior_flag:
+                # Prior-based expansion to class likelihood per anchor, then weight and sum
+                c_idx_blk = anchor_class_idx_t[s:e]  # (B,)
+                w_blk = w_t[s:e]                    # (B,)
+                B = c_idx_blk.shape[0]
 
-        # Compute mean score per class and choose the best (PDLL normalizes; argmax is invariant)
-        class_means = {c: (per_class_scores_sum[c] / max(1, per_class_counts[c])) for c in classes}
-        best_class = max(class_means.items(), key=lambda kv: kv[1])[0]
+                # L = ((1 - s) * prior / (1 - prior[class_of_anchor]))  with replacement of own class by s
+                one_minus_s = (1.0 - p_same).unsqueeze(1)  # (B,1)
+                denom = (1.0 - priors_t[c_idx_blk]).unsqueeze(1) + 1e-12
+                L = one_minus_s * priors_t.unsqueeze(0) / denom  # (B, C)
+                L[torch.arange(B, device=device), c_idx_blk] = p_same  # set own-class similarity
+                # Apply anchor weights and sum
+                class_contrib = (L * w_blk.unsqueeze(1)).sum(dim=0)  # (C,)
+                test_class_scores += class_contrib
+            else:
+                # Weighted mean similarity per class (pdll 'no prior' branch)
+                for c in classes:
+                    mask = class_to_mask[int(c)][s:e]
+                    if mask.any():
+                        w_mask = w_t[s:e][mask]
+                        per_class_scores_sum[int(c)] += float((p_same[mask] * w_mask).sum().item())
+                        per_class_weight_sum[int(c)] += float(w_mask.sum().item())
+
+        # Finalize per-class scores and choose the best
+        if use_prior_flag:
+            total = float(test_class_scores.sum().item())
+            if total > 0:
+                test_class_scores = test_class_scores / total  # normalize to sum=1 like pdll
+            best_idx = int(torch.argmax(test_class_scores).item())
+            best_class = int(classes[best_idx])
+        else:
+            class_means = {
+                int(c): (per_class_scores_sum[int(c)] / max(1e-12, per_class_weight_sum[int(c)])) for c in classes
+            }
+            best_class = max(class_means.items(), key=lambda kv: kv[1])[0]
         preds.append(int(best_class))
 
     return np.array(preds, dtype=int)
@@ -447,16 +458,9 @@ def main():
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n_fold", type=int, default=0, help="n_fold=0 for vanilla, >=2 for K-fold embeddings")
-    parser.add_argument(
-        "--pairs",
-        type=int,
-        default=None,
-        help="Deprecated/ignored: number of pairs now derived from dataset size",
-    )
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch", type=int, default=1024, help="Batch size for PDLC training")
-    parser.add_argument("--device", type=str, default="auto", choices=["auto","cpu","cuda"], help="Device for TabPFN and PDLC")
-    parser.add_argument("--folds", type=int, default=10, help="CV folds to use from OpenML task")
+    parser.add_argument("--device", type=str, default="auto", choices=["auto","cpu","cuda","mps"], help="Device for TabPFN and PDLC")
     parser.add_argument("--task_id", type=int, default=None, help="OpenML task id (overrides dataset lookup)")
     args = parser.parse_args()
 
@@ -475,110 +479,30 @@ def main():
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-    # Resolve task and load data
-    if hasattr(args, 'task_id') and args.task_id is not None:
-        tid = args.task_id
-    else:
-        did = resolve_openml_dataset_id(args.dataset)
-        tid = find_classification_task_for_dataset(did, folds=args.folds)
-    print(f"Using OpenML task id: {tid}")
-    X_all, y_all, cat_idx, le, task = load_openml_task_data(tid)
 
-    # Accumulators across folds
-    acc_et_raw, f1_et_raw = [], []
-    acc_tabpfn_raw, f1_tabpfn_raw = [], []
-    acc_et_emb, f1_et_emb = [], []
-    acc_pdll, f1_pdll = [], []
-    acc_pdll_raw, f1_pdll_raw = [], []
-    acc_pdlc, f1_pdlc = [], []
+    X_train, X_test, y_train, y_test, le, cat_idx = load_openml_dataset(name_or_id=str(args.dataset))
+    print(len(X_train), "train samples,", len(X_test), "test samples")
+    dev = resolve_device(args.device)
+    print(f"Using device: {dev}")
+    clf = TabPFNClassifier(n_estimators=1, random_state=42)
+    embedding_extractor = TabPFNEmbedding(tabpfn_clf=clf, n_fold=0)
+    E_train = embedding_extractor.get_embeddings(X_train,y_train,X_test, data_source="train")
+    E_test = embedding_extractor.get_embeddings(X_train,y_train,X_test, data_source="test")
 
-    repeats = getattr(task, "repeat", 1) if hasattr(task, "repeat") else 1
-    folds = getattr(task, "folds", args.folds) if hasattr(task, "folds") else args.folds
-    for repeat in range(repeats):
-        for fold in range(folds):
-            tr_idx, te_idx = task.get_train_test_split_indices(repeat=repeat, fold=fold)
-            X_train, X_test = X_all[tr_idx], X_all[te_idx]
-            y_train, y_test = y_all[tr_idx], y_all[te_idx]
-
-            # ExtraTrees on raw
-            et_raw = ExtraTreesClassifier(class_weight='balanced', n_jobs=-1, random_state=args.seed)
-            et_raw.fit(X_train, y_train)
-            y_pred = et_raw.predict(X_test)
-            acc_et_raw.append(accuracy_score(y_test, y_pred))
-            f1_et_raw.append(f1_score(y_test, y_pred, average='macro'))
-
-            # TabPFNClassifier on raw
-            tp_clf = TabPFNClassifier(
-                device=None if args.device=="auto" else args.device,
-                random_state=args.seed,
-                categorical_features_indices=cat_idx if len(cat_idx) > 0 else None,
-            )
-            tp_clf.fit(X_train, y_train)
-            y_pred_tp = tp_clf.predict(X_test)
-            acc_tabpfn_raw.append(accuracy_score(y_test, y_pred_tp))
-            f1_tabpfn_raw.append(f1_score(y_test, y_pred_tp, average='macro'))
-
-            # Embeddings via TabPFN
-            emb_extractor = TabPFNEmbedding(tabpfn_clf=tp_clf, n_fold=args.n_fold)
-            train_emb_raw = emb_extractor.get_embeddings(X_train, y_train, X_train, data_source="train")
-            test_emb_raw = emb_extractor.get_embeddings(X_train, y_train, X_test, data_source="test")
-            E_train = ensure_embeddings_2d(train_emb_raw, n_samples_expected=X_train.shape[0])
-            E_test = ensure_embeddings_2d(test_emb_raw, n_samples_expected=X_test.shape[0])
-
-            # ExtraTrees on embeddings
-            et_emb = ExtraTreesClassifier(class_weight='balanced', n_jobs=-1, random_state=args.seed)
-            et_emb.fit(E_train, y_train)
-            y_pred_emb = et_emb.predict(E_test)
-            acc_et_emb.append(accuracy_score(y_test, y_pred_emb))
-            f1_et_emb.append(f1_score(y_test, y_pred_emb, average='macro'))
-
-            # PDLL on embeddings
-            df_train = pd.DataFrame(E_train)
-            df_test = pd.DataFrame(E_test)
-            pdll_clf = PairwiseDifferenceClassifier(
-                estimator=ExtraTreesClassifier(class_weight='balanced', n_jobs=-1, random_state=args.seed),
-            )
-            pdll_clf.fit(df_train, y_train)
-            y_pred_pdll = pdll_clf.predict(df_test)
-            acc_pdll.append(accuracy_score(y_test, y_pred_pdll))
-            f1_pdll.append(f1_score(y_test, y_pred_pdll, average='macro'))
-
-            # PDLL on raw features
-            df_train_raw = pd.DataFrame(X_train)
-            df_test_raw = pd.DataFrame(X_test)
-            pdll_raw = PairwiseDifferenceClassifier(
-                estimator=ExtraTreesClassifier(class_weight='balanced', n_jobs=-1, random_state=args.seed),
-            )
-            pdll_raw.fit(df_train_raw, y_train)
-            y_pred_pdll_raw = pdll_raw.predict(df_test_raw)
-            acc_pdll_raw.append(accuracy_score(y_test, y_pred_pdll_raw))
-            f1_pdll_raw.append(f1_score(y_test, y_pred_pdll_raw, average='macro'))
-
-            # PDLC head on embeddings
-            num_pairs = int(X_train.shape[0] * X_train.shape[0])
-            pdlc = train_pdlc_head(
-                E_train,
-                y_train,
-                n_pairs=num_pairs,
-                batch_size=int(args.batch),
-                epochs=int(args.epochs),
-                device=None if args.device=="auto" else args.device,
-                seed=args.seed,
-            )
-            y_pred_pdlc = predict_pdlc(pdlc, E_train, y_train, E_test, device=None if args.device=="auto" else args.device)
-            acc_pdlc.append(accuracy_score(y_test, y_pred_pdlc))
-            f1_pdlc.append(f1_score(y_test, y_pred_pdlc, average='macro'))
-
-    def avg(xs):
-        return float(np.mean(xs)) if len(xs) else float("nan")
-
-    print("Results averaged over OpenML CV splits:")
-    print(f"ExtraTrees raw     - Acc: {avg(acc_et_raw):.4f}, Macro-F1: {avg(f1_et_raw):.4f}")
-    print(f"TabPFN raw        - Acc: {avg(acc_tabpfn_raw):.4f}, Macro-F1: {avg(f1_tabpfn_raw):.4f}")
-    print(f"ExtraTrees embed  - Acc: {avg(acc_et_emb):.4f}, Macro-F1: {avg(f1_et_emb):.4f}")
-    print(f"PDLL (embeddings) - Acc: {avg(acc_pdll):.4f}, Macro-F1: {avg(f1_pdll):.4f}")
-    print(f"PDLL (raw)        - Acc: {avg(acc_pdll_raw):.4f}, Macro-F1: {avg(f1_pdll_raw):.4f}")
-    print(f"PDLC head         - Acc: {avg(acc_pdlc):.4f}, Macro-F1: {avg(f1_pdlc):.4f}")
+    # PDLC head on embeddings
+    pdlc = train_pdlc_head(
+        E_train[0],
+        y_train,
+        batch_size=int(args.batch),
+        epochs=int(args.epochs),
+        device=dev,
+        seed=args.seed,
+    )
+    y_pred_pdlc = predict_pdlc(pdlc, E_train[0], y_train, E_test[0], device=dev, use_prior=True)
+    
+    accuracy = accuracy_score(y_test, y_pred_pdlc)
+    f1_macro = f1_score(y_test, y_pred_pdlc, average="macro")
+    print(f"PDLC on TabPFN embeddings - Accuracy: {accuracy:.4f}, F1-macro: {f1_macro:.4f}")
 
 
 if __name__ == "__main__":
