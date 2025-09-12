@@ -443,6 +443,8 @@ def predict_pdlc(
     return np.array(preds, dtype=int)
 
 
+
+
 def main():
     parser = argparse.ArgumentParser(description="PDLC head on TabPFN embeddings (classification) with OpenML 10-fold CV")
     parser.add_argument(
@@ -483,6 +485,7 @@ def main():
     embedding_extractor = TabPFNEmbedding(tabpfn_clf=clf, n_fold=args.n_fold)
     E_train = embedding_extractor.get_embeddings(X_train,y_train,X_test, data_source="train")
     E_test = embedding_extractor.get_embeddings(X_train,y_train,X_test, data_source="test")
+    
 
     # PDLC head on embeddings
     pdlc = train_pdlc_head(
@@ -494,7 +497,7 @@ def main():
         seed=args.seed,
     )
     y_pred_pdlc = predict_pdlc(pdlc, E_train[0], y_train, E_test[0], device=dev, batch_train=None)
-    
+
     accuracy = accuracy_score(y_test, y_pred_pdlc)
     f1_macro = f1_score(y_test, y_pred_pdlc, average="macro")
     print(f"PDLC on TabPFN embeddings - Accuracy: {accuracy:.4f}, F1-macro: {f1_macro:.4f}")
