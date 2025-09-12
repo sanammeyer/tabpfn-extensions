@@ -192,47 +192,49 @@ def load_openml_dataset(
     return X_train, X_test, y_train, y_test, le, cat_idx
 
 
-class EmbeddingPairsDataset(torch.utils.data.Dataset):
 
-    def __init__(
-        self,
-        E: np.ndarray,  # (N, D)
-        y: np.ndarray,  # (N,)
+class EmbeddingFeaturePairDataset(torch.utils.data.Dataset):
+    """
+    computes symmetric features on embeddings E1, E2
+    
+    """
+
+    def __init__(self,
+            E: np.ndarray,
+            y: np.ndarray,
     ) -> None:
         assert E.ndim == 2
         assert E.shape[0] == y.shape[0]
         self.E = E.astype(np.float32, copy=False)
         self.y = y
         self.N = E.shape[0]
-
+        
     def __len__(self) -> int:
         return self.N * self.N
-
+    
     def __getitem__(self,idx):
         i = idx//self.N
         j = idx%self.N
         e1 = torch.from_numpy(self.E[i])
         e2 = torch.from_numpy(self.E[j])
-        t = torch.tensor([float(self.y[i] == self.y[j])], dtype=torch.float32)  # 1=different, 0=same
-        return e1, e2, t
+        abs_diff = torch.abs(e1 - e2)  # symmetric feature
+        sqrt_diff = torch.sqrt(abs_diff + 1e-6)  # symmetric feature
+        hadamard = e1 * e2  # symmetric feature
+        cosine_sym = torch.nn.functional.cosine_similarity(e1, e2, dim=0).unsqueeze(0)  # symmetric feature
+        f = torch.cat([abs_diff, sqrt_diff, hadamard, cosine_sym], dim=0)
+        t = torch.tensor([float(self.y[i] == self.y[j])], dtype=torch.float32)  # 1=same, 0=different
+        return f, t
 
-
-class PDLCHead(nn.Module):
-    """Small MLP that takes two embeddings and predicts same/different class.
-
-    Input: concatenation [e1, e2] of dimension 2*D.
-    Output: logit (unnormalized score); apply sigmoid for probability.
-    """
-
-    def __init__(self, emb_dim: int, hidden: Tuple[int, int] | None = None, dropout: float = 0.0):
+class PDLCFeatureHead(nn.Module):
+    def __init__(self, input_dim: int, hidden: Tuple[int, int] | None = None, dropout: float = 0.0):
         super().__init__()
         if hidden is None:
-            # Reasonable defaults scaled by emb size
-            h1 = max(64, min(512, emb_dim))
-            h2 = max(32, min(256, emb_dim // 2))
+            # Reasonable defaults scaled by input size
+            h1 = max(64, min(512, input_dim))
+            h2 = max(32, min(256, input_dim // 2))
             hidden = (h1, h2)
         self.net = nn.Sequential(
-            nn.Linear(2 * emb_dim, hidden[0]),
+            nn.Linear(input_dim, hidden[0]),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
             nn.Linear(hidden[0], hidden[1]),
@@ -240,11 +242,62 @@ class PDLCHead(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden[1], 1),
         )
+    def forward(self, f: torch.Tensor) -> torch.Tensor:
+        return self.net(f)  # (B, 1)
 
-    def forward(self, e1: torch.Tensor, e2: torch.Tensor) -> torch.Tensor:
-        # e1, e2: (B, D)
-        x = torch.cat([e1, e2], dim=1)
-        return self.net(x)  # (B, 1)
+# class EmbeddingPairsDataset(torch.utils.data.Dataset):
+
+#     def __init__(
+#         self,
+#         E: np.ndarray,  # (N, D)
+#         y: np.ndarray,  # (N,)
+#     ) -> None:
+#         assert E.ndim == 2
+#         assert E.shape[0] == y.shape[0]
+#         self.E = E.astype(np.float32, copy=False)
+#         self.y = y
+#         self.N = E.shape[0]
+
+#     def __len__(self) -> int:
+#         return self.N * self.N
+
+#     def __getitem__(self,idx):
+#         i = idx//self.N
+#         j = idx%self.N
+#         e1 = torch.from_numpy(self.E[i])
+#         e2 = torch.from_numpy(self.E[j])
+#         t = torch.tensor([float(self.y[i] == self.y[j])], dtype=torch.float32)  # 1=different, 0=same
+#         return e1, e2, t
+
+
+# class PDLCHead(nn.Module):
+#     """Small MLP that takes two embeddings and predicts same/different class.
+
+#     Input: concatenation [e1, e2] of dimension 2*D.
+#     Output: logit (unnormalized score); apply sigmoid for probability.
+#     """
+
+#     def __init__(self, emb_dim: int, hidden: Tuple[int, int] | None = None, dropout: float = 0.0):
+#         super().__init__()
+#         if hidden is None:
+#             # Reasonable defaults scaled by emb size
+#             h1 = max(64, min(512, emb_dim))
+#             h2 = max(32, min(256, emb_dim // 2))
+#             hidden = (h1, h2)
+#         self.net = nn.Sequential(
+#             nn.Linear(2 * emb_dim, hidden[0]),
+#             nn.ReLU(inplace=True),
+#             nn.Dropout(dropout),
+#             nn.Linear(hidden[0], hidden[1]),
+#             nn.ReLU(inplace=True),
+#             nn.Dropout(dropout),
+#             nn.Linear(hidden[1], 1),
+#         )
+
+#     def forward(self, e1: torch.Tensor, e2: torch.Tensor) -> torch.Tensor:
+#         # e1, e2: (B, D)
+#         x = torch.cat([e1, e2], dim=1)
+#         return self.net(x)  # (B, 1)
 
 
 def pair_counts(y):
@@ -262,7 +315,7 @@ def train_pdlc_head(E_train: np.ndarray,
                     weight_decay: float = 1e-4, 
                     device: str | torch.device | None = None, 
                     seed: int | None = None,
-                    ) -> PDLCHead:
+                    ) -> PDLCFeatureHead:
     E_train = E_train.astype(np.float32, copy=False)
     emb_dim = E_train.shape[1]
     device = resolve_device(device)
@@ -275,7 +328,7 @@ def train_pdlc_head(E_train: np.ndarray,
     if seed is not None:
         gen.manual_seed(seed)
 
-    dataset = EmbeddingPairsDataset(E_train, y_train)
+    dataset = EmbeddingFeaturePairDataset(E_train, y_train)
     num_pairs = len(dataset)
     loader = torch.utils.data.DataLoader(
         dataset,
@@ -285,8 +338,10 @@ def train_pdlc_head(E_train: np.ndarray,
         num_workers=0,
         generator=gen,
     )
+    
+    in_dim = 3*emb_dim + 1  # abs diff, sqrt diff, hadamard, cosine similarity
 
-    model = PDLCHead(emb_dim=emb_dim, dropout=0.1).to(device)
+    model = PDLCFeatureHead(input_dim=in_dim, dropout=0.1).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     n_same, n_diff = pair_counts(y_train)
     pos_weight = torch.tensor([n_diff/max(1, n_same)], dtype=torch.float32, device=device)
@@ -296,13 +351,12 @@ def train_pdlc_head(E_train: np.ndarray,
     for epoch in range(epochs):
         running_loss = 0.0
         n_batches = 0
-        for e1, e2, t in loader:
-            e1 = e1.to(device)
-            e2 = e2.to(device)
+        for f, t in loader:
+            f = f.to(device)
             t = t.to(device)
 
             opt.zero_grad(set_to_none=True)
-            logits = model(e1, e2)
+            logits = model(f)
             loss = loss_fn(logits, t)
             loss.backward()
             opt.step()
@@ -318,7 +372,7 @@ def train_pdlc_head(E_train: np.ndarray,
 
 @torch.no_grad()
 def predict_pdlc(
-    model: PDLCHead,
+    model: PDLCFeatureHead,
     E_train: np.ndarray,
     y_train: np.ndarray,
     E_test: np.ndarray,
@@ -398,9 +452,14 @@ def predict_pdlc(
             block = E_train_t[s:e]  # (B, D)
 
             # Forward for both orders; model outputs logit for 'same'
-            logits1 = model(e_t.expand(block.shape[0], -1), block)  # (B, 1)
-            logits2 = model(block, e_t.expand(block.shape[0], -1))
-            p_same = 0.5 * (sigmoid(logits1) + sigmoid(logits2)).squeeze(1)  # (B,)
+            e_t_exp = e_t.expand(block.shape[0], -1)  # (B, D)
+            abs_diff = torch.abs(e_t_exp - block)  # symmetric feature
+            sqrt_diff = torch.sqrt(abs_diff + 1e-6)  # symmetric feature
+            hadamard = e_t_exp * block  # symmetric feature
+            cosine_sym = torch.nn.functional.cosine_similarity(e_t_exp, block, dim=1).unsqueeze(1)  # symmetric feature
+            f_block = torch.cat([abs_diff, sqrt_diff, hadamard, cosine_sym], dim=1)  # (B, 4D)
+            logits = model(f_block)  # (B, 1)
+            p_same = sigmoid(logits).squeeze(1)  # (B,) probability
             p_diff = 1.0 - p_same  # similarity = P(different) = 1 - P(same)
 
             if use_prior_flag:
