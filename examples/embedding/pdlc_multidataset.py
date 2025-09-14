@@ -54,6 +54,11 @@ def resolve_device(device_arg: str | torch.device | None = "auto") -> torch.devi
     return torch.device(str(device_arg))
 
 
+"""
+Training script only. Evaluation utilities have been moved to a separate script.
+"""
+
+
 def ensure_embeddings_2d(emb: np.ndarray, n_samples_expected: int) -> np.ndarray:
     """Match the robust shaping used in pdlc_head_test.py
 
@@ -78,6 +83,8 @@ def ensure_embeddings_2d(emb: np.ndarray, n_samples_expected: int) -> np.ndarray
     emb = np.moveaxis(emb, sample_axis, 0)
     emb = emb.reshape(emb.shape[0], -1)
     return emb.astype(np.float32, copy=False)
+
+
 
 
 def load_openml_dataset(
@@ -122,9 +129,20 @@ class DatasetEntry:
     class_to_indices: Dict[int, np.ndarray]
 
 
-def get_embeddings(name: str, n_fold: int, seed: int) -> DatasetEntry:
+def get_embeddings(
+    name: str,
+    n_fold: int,
+    seed: int,
+) -> DatasetEntry:
     """Extract 2D embeddings consistent with pdlc_head_test.py logic."""
     X_train, X_test, y_train, y_test, _ = load_openml_dataset(name, random_state=seed)
+    # Enforce hard limits before fitting TabPFN
+    n_features = X_train.shape[1]
+    n_classes = int(len(np.unique(y_train)))
+    if (n_features > 500) or (n_classes > 10):
+        raise ValueError(
+            f"Dataset {name} skipped: features={n_features} (max 500), classes={n_classes} (max 10)"
+        )
     clf = TabPFNClassifier(n_estimators=1, random_state=seed)
     emb = TabPFNEmbedding(tabpfn_clf=clf, n_fold=n_fold)
     E_train_raw = emb.get_embeddings(X_train, y_train, X_test, data_source="train")
@@ -202,7 +220,9 @@ class BalancedMultiDatasetPairs(torch.utils.data.Dataset):
         self.entries = entries
         self.total_samples = int(total_samples)
         self.D = len(entries)
-        self.rng = np.random.default_rng(seed)
+        # Store a base seed; sampling will be derived from (base_seed, idx)
+        # to make results independent of DataLoader shuffling and num_workers.
+        self.seed = int(seed if seed is not None else 0)
 
         dims = [e.E_train.shape[1] for e in entries]
         if len(set(dims)) != 1:
@@ -215,8 +235,17 @@ class BalancedMultiDatasetPairs(torch.utils.data.Dataset):
         d = int(idx % self.D)  # balanced counts per dataset per epoch
         e = self.entries[d]
         n = e.E_train.shape[0]
-        i = int(self.rng.integers(0, n))
-        j = int(self.rng.integers(0, n))
+        # Derive a deterministic RNG from (seed, idx) so results are reproducible
+        # regardless of DataLoader shuffling or multiprocessing order.
+        # Use 64-bit mixing constants (LCG-style) for stable seeds.
+        mixed = (
+            np.uint64(self.seed) * np.uint64(6364136223846793005)
+            + np.uint64(idx) * np.uint64(1442695040888963407)
+            + np.uint64(d)
+        )
+        rng = np.random.default_rng(int(np.uint64(mixed)))
+        i = int(rng.integers(0, n))
+        j = int(rng.integers(0, n))
         e1 = torch.from_numpy(e.E_train[i].astype(np.float32, copy=False))
         e2 = torch.from_numpy(e.E_train[j].astype(np.float32, copy=False))
         t = torch.tensor([float(e.y_train[i] == e.y_train[j])], dtype=torch.float32)
@@ -244,6 +273,8 @@ class PDLCHead(nn.Module):
         return self.net(torch.cat([e1, e2], dim=1))
 
 
+
+
 def _pair_counts_entries(entries: List[DatasetEntry]) -> Tuple[int, int]:
     """Compute total same/different counts across datasets like pdlc_head_test.pair_counts.
 
@@ -263,6 +294,37 @@ def _pair_counts_entries(entries: List[DatasetEntry]) -> Tuple[int, int]:
         n_same_total += n_same
         n_diff_total += n_diff
     return n_same_total, n_diff_total
+
+
+def _pos_weight_for_entries(entries: List[DatasetEntry], balanced: bool) -> float:
+    """Compute pos_weight matching the sampling distribution.
+
+    - If balanced is False (all-pairs or uniform subsample of all pairs):
+      use global counts across entries: pos_weight = n_diff / n_same.
+    - If balanced is True (uniform over datasets, then uniform i,j within dataset):
+      let p_same_d = sum_c n_{d,c}^2 / n_d^2; p_same = mean_d p_same_d; pos_weight = (1-p_same)/p_same.
+    """
+    if not entries:
+        return 1.0
+    if not balanced:
+        n_same_all, n_diff_all = _pair_counts_entries(entries)
+        return float(n_diff_all) / max(1.0, float(n_same_all))
+    # balanced: average per-dataset same-prob
+    ps: List[float] = []
+    for e in entries:
+        _, counts = np.unique(e.y_train, return_counts=True)
+        n = int(counts.sum())
+        if n <= 0:
+            continue
+        p_same_d = float((counts.astype(np.int64)**2).sum()) / float(n * n)
+        ps.append(p_same_d)
+    if not ps:
+        return 1.0
+    p_same = float(np.mean(ps))
+    p_diff = max(0.0, 1.0 - p_same)
+    if p_same <= 0:
+        return 1.0
+    return p_diff / p_same
 
 
 @torch.no_grad()
@@ -416,14 +478,19 @@ def main():
                 "--auto_small requires the 'openml' package. Install with: pip install openml"
             ) from e
 
-        print(f"Discovering small OpenML datasets (<= {args.max_rows} rows)...")
+        print(f"Discovering small OpenML datasets (<= {args.max_rows} rows, <= 500 features, <= 10 classes)...")
         df = openml.datasets.list_datasets(output_format="dataframe")
         # Keep active classification datasets with <= max_rows and at least 2 classes
         df = df[(df.status == "active")]
         if "NumberOfInstances" in df.columns:
             df = df[df["NumberOfInstances"].fillna(0) <= args.max_rows]
+        if "NumberOfFeatures" in df.columns:
+            # Keep datasets with features <= 500
+            df = df[df["NumberOfFeatures"].fillna(0) <= 500]
         if "NumberOfClasses" in df.columns:
-            df = df[df["NumberOfClasses"].fillna(0) >= 2]
+            # Keep classification datasets with classes in [2, max_classes]
+            n_classes = df["NumberOfClasses"].fillna(0)
+            df = df[n_classes.between(2, 10, inclusive="both")]
 
         # Prefer the latest version per name to avoid duplicate name-versions; fall back to unique dids
         if {"name", "version"}.issubset(df.columns):
@@ -442,18 +509,43 @@ def main():
     entries: List[DatasetEntry] = []
     for name in names:
         print(f"Preparing dataset: {name}")
-        entry = get_embeddings(name, n_fold=args.n_fold, seed=args.seed)
+        try:
+            entry = get_embeddings(
+                name,
+                n_fold=args.n_fold,
+                seed=args.seed,
+            )
+        except Exception as e:
+            # Skip datasets that fail during embedding extraction (e.g., ARPACK SVD failures)
+            print(f"Skipping dataset {name} due to error: {type(e).__name__}: {e}")
+            continue
         print(f" - E_train: {entry.E_train.shape}, E_test: {entry.E_test.shape}")
         entries.append(entry)
 
+    if not entries:
+        print("No datasets matched the constraints (<= 500 features and <= 10 classes). Exiting.")
+        return
+
+    # Split into train/val datasets (hold out one dataset for validation if possible)
+    if not entries:
+        print("No datasets matched the constraints (<= 500 features and <= 10 classes). Exiting.")
+        return
+    if len(entries) >= 2:
+        val_entries = [entries[-1]]
+        train_entries = entries[:-1]
+        print(f"Validation holdout: {val_entries[0].name}")
+    else:
+        val_entries = []
+        train_entries = entries
+
     # Build shared PDLC head
-    emb_dim = entries[0].E_train.shape[1]
+    emb_dim = train_entries[0].E_train.shape[1]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = PDLCHead(emb_dim=emb_dim, dropout=0.1).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    # pos_weight to match pdlc_head_test.py semantics (t=1 for same)
-    n_same_all, n_diff_all = _pair_counts_entries(entries)
-    pos_weight = torch.tensor([n_diff_all / max(1, n_same_all)], dtype=torch.float32, device=device)
+    # pos_weight aligned with sampling
+    pw_val = _pos_weight_for_entries(train_entries, balanced=bool(args.balanced_sampling))
+    pos_weight = torch.tensor([pw_val], dtype=torch.float32, device=device)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     # Training loop
@@ -468,16 +560,42 @@ def main():
                 total_pairs = 1_000_000
             else:
                 total_pairs = int(args.pairs_per_epoch)
-            ds = BalancedMultiDatasetPairs(entries, total_samples=total_pairs, seed=args.seed)
-            loader = torch.utils.data.DataLoader(ds, batch_size=args.batch, shuffle=True, drop_last=False)
+            # Vary seed by epoch for diversity while keeping runs reproducible
+            ds = BalancedMultiDatasetPairs(train_entries, total_samples=total_pairs, seed=args.seed + epoch)
+            dl_gen = torch.Generator().manual_seed(args.seed + epoch)
+            loader = torch.utils.data.DataLoader(
+                ds,
+                batch_size=args.batch,
+                shuffle=True,
+                drop_last=False,
+                generator=dl_gen,
+            )
         else:
-            ds = MultiDatasetAllPairs(entries)
+            ds = MultiDatasetAllPairs(train_entries)
             # Optional uniform subsampling per epoch to limit compute
             if args.pairs_per_epoch is not None and args.pairs_per_epoch > 0:
-                sampler = torch.utils.data.RandomSampler(ds, replacement=True, num_samples=int(args.pairs_per_epoch))
-                loader = torch.utils.data.DataLoader(ds, batch_size=args.batch, sampler=sampler, drop_last=False)
+                dl_gen = torch.Generator().manual_seed(args.seed + epoch)
+                sampler = torch.utils.data.RandomSampler(
+                    ds,
+                    replacement=True,
+                    num_samples=int(args.pairs_per_epoch),
+                    generator=dl_gen,
+                )
+                loader = torch.utils.data.DataLoader(
+                    ds,
+                    batch_size=args.batch,
+                    sampler=sampler,
+                    drop_last=False,
+                )
             else:
-                loader = torch.utils.data.DataLoader(ds, batch_size=args.batch, shuffle=True, drop_last=False)
+                dl_gen = torch.Generator().manual_seed(args.seed + epoch)
+                loader = torch.utils.data.DataLoader(
+                    ds,
+                    batch_size=args.batch,
+                    shuffle=True,
+                    drop_last=False,
+                    generator=dl_gen,
+                )
 
         run_loss, n_batches = 0.0, 0
         for e1, e2, t in loader:
@@ -492,30 +610,53 @@ def main():
 
         train_loss = run_loss / max(1, n_batches)
 
-        # Evaluate per dataset
+        # Evaluate
         model.eval()
-        per_acc = {}
-        for entry in entries:
+        train_per_acc = {}
+        for entry in train_entries:
             y_pred = predict_pdlc(model, entry.E_train, entry.y_train, entry.E_test, device=device, use_prior=True)
             acc = accuracy_score(entry.y_test, y_pred)
-            per_acc[entry.name] = acc
+            train_per_acc[entry.name] = acc
 
-        mean_acc = float(np.mean(list(per_acc.values()))) if per_acc else float("nan")
-        print(f"Epoch {epoch}/{args.epochs} - loss: {train_loss:.4f} - mean_acc: {mean_acc:.4f} - " + ", ".join(f"{k}:{v:.3f}" for k,v in per_acc.items()))
+        val_per_acc = {}
+        for entry in val_entries:
+            y_pred = predict_pdlc(model, entry.E_train, entry.y_train, entry.E_test, device=device, use_prior=True)
+            acc = accuracy_score(entry.y_test, y_pred)
+            val_per_acc[entry.name] = acc
+
+        train_mean_acc = float(np.mean(list(train_per_acc.values()))) if train_per_acc else float("nan")
+        val_mean_acc = float(np.mean(list(val_per_acc.values()))) if val_per_acc else float("nan")
+        msg = (
+            f"Epoch {epoch}/{args.epochs} - loss: {train_loss:.4f} - train_mean: {train_mean_acc:.4f}"
+            + (f" - val_mean: {val_mean_acc:.4f}" if val_per_acc else "")
+        )
+        # Print compact per-dataset summaries
+        train_str = ", ".join(f"{k}:{v:.3f}" for k,v in train_per_acc.items())
+        val_str = ", ".join(f"{k}:{v:.3f}" for k,v in val_per_acc.items())
+        if train_str:
+            msg += " - train: " + train_str
+        if val_str:
+            msg += " - val: " + val_str
+        print(msg)
 
         # Log
-        row = {"epoch": epoch, "loss": train_loss, "mean_acc": mean_acc}
-        for k, v in per_acc.items():
-            row[f"acc_{k}"] = v
+        row = {"epoch": epoch, "loss": train_loss, "train_mean_acc": train_mean_acc}
+        if val_per_acc:
+            row["val_mean_acc"] = val_mean_acc
+        for k, v in train_per_acc.items():
+            row[f"acc_train_{k}"] = v
+        for k, v in val_per_acc.items():
+            row[f"acc_val_{k}"] = v
         log_rows.append(row)
         pd.DataFrame(log_rows).to_csv(args.log_csv, index=False)
 
         # Checkpoint
-        if mean_acc > best_mean_acc:
-            best_mean_acc = mean_acc
+        metric_for_ckpt = val_mean_acc if val_per_acc else train_mean_acc
+        if metric_for_ckpt > best_mean_acc:
+            best_mean_acc = metric_for_ckpt
             torch.save({"model": model.state_dict(), "epoch": epoch}, args.ckpt)
 
-    print(f"Training complete. Best mean accuracy: {best_mean_acc:.4f}. Logs: {args.log_csv}. Ckpt: {args.ckpt}")
+    print(f"Training complete. Best metric: {best_mean_acc:.4f}. Logs: {args.log_csv}. Ckpt: {args.ckpt}")
 
 
 if __name__ == "__main__":

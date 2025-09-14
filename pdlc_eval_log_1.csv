@@ -1,0 +1,129 @@
+dataset,status,reason,acc,n_train,n_test
+3,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 6.27 GiB. GPU 0 has a total capacity of 15.98 GiB of which 562.00 MiB is free. Of the allocated memory 14.77 GiB is allocated by PyTorch, and 311.51 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+12,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 5.11 GiB. GPU 0 has a total capacity of 15.98 GiB of which 2.65 GiB is free. Of the allocated memory 12.80 GiB is allocated by PyTorch, and 173.37 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+23,ok,,0.5542986425339367,1031.0,442.0
+31,ok,,0.43666666666666665,700.0,300.0
+43,ok,,0.29347826086956524,214.0,92.0
+48,ok,,0.45652173913043476,105.0,46.0
+54,ok,,0.4566929133858268,592.0,254.0
+59,ok,,0.9339622641509434,245.0,106.0
+61,ok,,0.5777777777777777,105.0,45.0
+164,ok,,0.9375,74.0,32.0
+181,ok,,0.3116591928251121,1038.0,446.0
+188,ok,,0.32124352331606215,448.0,193.0
+333,ok,,0.9940119760479041,389.0,167.0
+377,ok,,0.36666666666666664,420.0,180.0
+444,ok,,0.45,92.0,40.0
+464,ok,,0.9466666666666667,175.0,75.0
+475,ok,,0.25833333333333336,280.0,120.0
+714,ok,,0.39473684210526316,87.0,38.0
+717,ok,,0.8627450980392157,355.0,153.0
+721,ok,,0.85,140.0,60.0
+733,ok,,0.9206349206349206,146.0,63.0
+736,ok,,0.6176470588235294,77.0,34.0
+744,ok,,0.8666666666666667,175.0,75.0
+750,ok,,0.49333333333333335,350.0,150.0
+756,ok,,0.9375,111.0,48.0
+766,ok,,0.9533333333333334,350.0,150.0
+767,ok,,0.916083916083916,332.0,143.0
+768,ok,,0.7,70.0,30.0
+773,ok,,0.8933333333333333,175.0,75.0
+779,ok,,0.8666666666666667,350.0,150.0
+782,ok,,0.9722222222222222,84.0,36.0
+784,ok,,0.6666666666666666,98.0,42.0
+788,ok,,0.5714285714285714,130.0,56.0
+792,ok,,0.94,350.0,150.0
+793,ok,,0.92,175.0,75.0
+811,ok,,0.9125,184.0,80.0
+812,ok,,0.7,70.0,30.0
+814,ok,,0.8865248226950354,327.0,141.0
+824,ok,,0.9133333333333333,350.0,150.0
+850,ok,,0.5333333333333333,70.0,30.0
+853,ok,,0.881578947368421,354.0,152.0
+860,ok,,0.7456140350877193,266.0,114.0
+863,ok,,0.84,175.0,75.0
+870,ok,,0.9533333333333334,350.0,150.0
+873,ok,,0.92,175.0,75.0
+877,ok,,0.9333333333333333,175.0,75.0
+879,ok,,0.8866666666666667,350.0,150.0
+880,ok,,0.6511627906976745,198.0,86.0
+889,ok,,0.8333333333333334,70.0,30.0
+895,ok,,0.8955223880597015,155.0,67.0
+896,ok,,0.9266666666666666,350.0,150.0
+902,ok,,0.6,102.0,45.0
+906,ok,,0.48333333333333334,280.0,120.0
+909,ok,,0.49166666666666664,280.0,120.0
+911,ok,,0.8933333333333333,175.0,75.0
+915,ok,,0.42105263157894735,220.0,95.0
+918,ok,,0.9333333333333333,175.0,75.0
+925,ok,,0.4536082474226804,226.0,97.0
+932,ok,,0.8333333333333334,70.0,30.0
+933,ok,,0.88,175.0,75.0
+935,ok,,0.92,175.0,75.0
+936,ok,,0.8866666666666667,350.0,150.0
+937,ok,,0.9333333333333333,350.0,150.0
+969,ok,,1.0,105.0,45.0
+973,ok,,0.9629629629629629,124.0,54.0
+974,ok,,0.775,92.0,40.0
+1005,ok,,0.4461538461538462,149.0,65.0
+1011,ok,,0.9504950495049505,235.0,101.0
+1012,ok,,0.5423728813559322,135.0,59.0
+1049,ok,,0.8767123287671232,1020.0,438.0
+1054,ok,,0.3877551020408163,112.0,49.0
+1063,ok,,0.20382165605095542,365.0,157.0
+1065,ok,,0.09420289855072464,320.0,138.0
+1067,ok,,0.4218009478672986,1476.0,633.0
+1073,skipped,No active dataset 1073 found.,,,
+1100,ok,,0.4236111111111111,334.0,144.0
+1115,ok,,0.6521739130434783,105.0,46.0
+1413,ok,,0.5777777777777777,105.0,45.0
+1464,ok,,0.24,523.0,225.0
+1467,ok,,0.9012345679012346,378.0,162.0
+1475,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 11.42 GiB. GPU 0 has a total capacity of 15.98 GiB of which 3.04 GiB is free. Of the allocated memory 12.39 GiB is allocated by PyTorch, and 193.70 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+1480,ok,,0.3028571428571429,408.0,175.0
+1487,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 1.62 GiB. GPU 0 has a total capacity of 15.98 GiB of which 1.43 GiB is free. Of the allocated memory 13.79 GiB is allocated by PyTorch, and 396.29 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+1488,ok,,0.7288135593220338,136.0,59.0
+1489,ok,,0.5049321824907521,3782.0,1622.0
+1490,ok,,0.2909090909090909,127.0,55.0
+1494,ok,,0.6561514195583596,738.0,317.0
+1499,ok,,0.6349206349206349,147.0,63.0
+1510,ok,,0.8596491228070176,398.0,171.0
+1511,ok,,0.9015151515151515,308.0,132.0
+1523,ok,,0.7204301075268817,217.0,93.0
+1554,ok,,0.4066666666666667,350.0,150.0
+1556,ok,,1.0,84.0,36.0
+1600,ok,,0.6790123456790124,186.0,81.0
+4329,ok,,0.14893617021276595,329.0,141.0
+4538,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 19.22 GiB. GPU 0 has a total capacity of 15.98 GiB of which 13.66 GiB is free. Of the allocated memory 1.30 GiB is allocated by PyTorch, and 671.36 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+40498,ok,,0.004081632653061225,3428.0,1470.0
+40663,ok,,0.475,279.0,120.0
+40670,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 5.27 GiB. GPU 0 has a total capacity of 15.98 GiB of which 4.63 GiB is free. Of the allocated memory 9.03 GiB is allocated by PyTorch, and 1.96 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+40681,ok,,0.8461538461538461,89.0,39.0
+40701,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 9.31 GiB. GPU 0 has a total capacity of 15.98 GiB of which 4.53 GiB is free. Of the allocated memory 9.95 GiB is allocated by PyTorch, and 1.14 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+40900,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 5.74 GiB. GPU 0 has a total capacity of 15.98 GiB of which 1.94 GiB is free. Of the allocated memory 13.50 GiB is allocated by PyTorch, and 174.47 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+40975,ok,,0.49710982658959535,1209.0,519.0
+40981,ok,,0.45410628019323673,483.0,207.0
+40982,ok,,0.346483704974271,1358.0,583.0
+40983,ok,,0.48622589531680444,3387.0,1452.0
+40984,ok,,0.6248196248196248,1617.0,693.0
+41143,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 8.91 GiB. GPU 0 has a total capacity of 15.98 GiB of which 4.69 GiB is free. Of the allocated memory 10.43 GiB is allocated by PyTorch, and 490.22 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+41144,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 7.41 GiB. GPU 0 has a total capacity of 15.98 GiB of which 3.48 GiB is free. Of the allocated memory 11.84 GiB is allocated by PyTorch, and 284.15 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+41145,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 19.52 GiB. GPU 0 has a total capacity of 15.98 GiB of which 1018.00 MiB is free. Of the allocated memory 14.60 GiB is allocated by PyTorch, and 22.54 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+41146,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 7.76 GiB. GPU 0 has a total capacity of 15.98 GiB of which 6.94 GiB is free. Of the allocated memory 8.29 GiB is allocated by PyTorch, and 377.39 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+41156,oom,"OutOfMemoryError: HIP out of memory. Tried to allocate 7.34 GiB. GPU 0 has a total capacity of 15.98 GiB of which 6.60 GiB is free. Of the allocated memory 7.95 GiB is allocated by PyTorch, and 1.06 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_HIP_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",,,
+41568,ok,,0.7555555555555555,105.0,45.0
+41977,ok,,0.5106382978723404,109.0,47.0
+41978,ok,,0.5957446808510638,109.0,47.0
+42011,ok,,0.7555555555555555,105.0,45.0
+42021,ok,,0.7555555555555555,105.0,45.0
+42026,ok,,0.7555555555555555,105.0,45.0
+42051,ok,,0.7555555555555555,105.0,45.0
+42066,ok,,0.7555555555555555,105.0,45.0
+42071,ok,,0.7555555555555555,105.0,45.0
+42186,ok,,0.5777777777777777,105.0,45.0
+42700,ok,,0.7555555555555555,105.0,45.0
+43859,ok,,0.7555555555555555,105.0,45.0
+44149,ok,,0.5393258426966292,207.0,89.0
+44151,ok,,0.4222222222222222,104.0,45.0
+44344,ok,,0.5777777777777777,105.0,45.0
+45711,ok,,0.3333333333333333,371.0,159.0
