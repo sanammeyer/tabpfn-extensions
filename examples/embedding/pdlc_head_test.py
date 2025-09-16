@@ -35,9 +35,6 @@ from tabpfn_extensions import TabPFNClassifier
 from tabpfn_extensions.embedding import TabPFNEmbedding
 
 
-from pdll import PairwiseDifferenceClassifier
-
-
 def resolve_device(device_arg: str | torch.device | None = "auto") -> torch.device:
     """Resolve a single torch.device based on availability and user preference.
 

@@ -6,7 +6,8 @@ The PDLC head learns to predict whether two embeddings belong to the same class.
 Key features
 - Loads multiple small/medium OpenML classification datasets
 - Extracts TabPFNv2 row embeddings per dataset (train/test)
-- Trains a shared PDLC head with pairwise BCE loss on pooled pairs
+- Implements hard-mining: finds the most difficult pairs each epoch and trains on them.
+- Implements LR scheduling: Uses CosineAnnealingLR for better convergence.
 - Evaluates per-dataset each epoch by aggregating scores vs. that dataset's training set
 - Logs training loss and per-dataset accuracies to a CSV; optional checkpointing
 
@@ -466,8 +467,6 @@ def main():
     parser.add_argument("--ckpt", type=str, default="pdlc_multi.pt")
     args = parser.parse_args()
 
-    rng = np.random.default_rng(args.seed)
-
     # Determine dataset list
     if args.auto_small:
         try:
@@ -505,9 +504,19 @@ def main():
         # Load datasets and extract embeddings
         names = [s.strip() for s in args.datasets.split(",") if s.strip()]
         print(f"Datasets: {names}")
-    entries: List[DatasetEntry] = []
-    for name in names:
-        print(f"Preparing dataset: {name}")
+    # Decide train/val split on dataset NAMES first
+    if len(names) >= 2:
+        num_val = max(1, math.ceil(len(names) * 0.1))
+        val_names = names[:num_val]
+        train_names = names[num_val:]
+    else:
+        val_names = []
+        train_names = names
+
+    # Load TRAIN embeddings with the requested n_fold
+    train_entries: List[DatasetEntry] = []
+    for name in train_names:
+        print(f"Preparing TRAIN dataset: {name} (n_fold={args.n_fold})")
         try:
             entry = get_embeddings(
                 name,
@@ -515,27 +524,34 @@ def main():
                 seed=args.seed,
             )
         except Exception as e:
-            # Skip datasets that fail during embedding extraction (e.g., ARPACK SVD failures)
-            print(f"Skipping dataset {name} due to error: {type(e).__name__}: {e}")
+            print(f"Skipping train dataset {name} due to error: {type(e).__name__}: {e}")
             continue
-        print(f" - E_train: {entry.E_train.shape}, E_test: {entry.E_test.shape}")
-        entries.append(entry)
+        print(f" - [train] E_train: {entry.E_train.shape}, E_test: {entry.E_test.shape}")
+        train_entries.append(entry)
 
-    if not entries:
+    # Load VALIDATION embeddings with n_fold=0 (always)
+    val_entries: List[DatasetEntry] = []
+    for name in val_names:
+        print(f"Preparing VAL dataset: {name} (n_fold=0)")
+        try:
+            entry = get_embeddings(
+                name,
+                n_fold=0,
+                seed=args.seed,
+            )
+        except Exception as e:
+            print(f"Skipping val dataset {name} due to error: {type(e).__name__}: {e}")
+            continue
+        print(f" - [val] E_train: {entry.E_train.shape}, E_test: {entry.E_test.shape}")
+        val_entries.append(entry)
+
+    if not train_entries and not val_entries:
         print("No datasets matched the constraints (<= 500 features and <= 10 classes). Exiting.")
         return
-
-    # Split into train/val datasets (hold out one dataset for validation if possible)
-    if not entries:
-        print("No datasets matched the constraints (<= 500 features and <= 10 classes). Exiting.")
+    if not train_entries:
+        print("No training datasets available after filtering/embedding extraction. Exiting.")
         return
-    if len(entries) >= 2:
-        val_entries = [entries[-1]]
-        train_entries = entries[:-1]
-        print(f"Validation holdout: {val_entries[0].name}")
-    else:
-        val_entries = []
-        train_entries = entries
+    print(f"Number of validation holdout datasets: {len(val_entries)}")
 
     # Build shared PDLC head
     emb_dim = train_entries[0].E_train.shape[1]
@@ -561,58 +577,80 @@ def main():
     best_mean_acc = -1.0
     log_rows: List[dict] = []
     
-    for epoch in range(1, args.epochs + 1):
-        model.train()
-        if args.balanced_sampling:
-            if args.pairs_per_epoch is None or args.pairs_per_epoch <= 0:
-                # Fallback: allocate a conservative default if not provided
-                # Default to 1e6 pairs per epoch split across datasets
-                total_pairs = 1_000_000
-            else:
-                total_pairs = int(args.pairs_per_epoch)
-            # Vary seed by epoch for diversity while keeping runs reproducible
-            ds = BalancedMultiDatasetPairs(train_entries, total_samples=total_pairs, seed=args.seed + epoch)
-            dl_gen = torch.Generator().manual_seed(args.seed + epoch)
-            loader = torch.utils.data.DataLoader(
-                ds,
-                batch_size=args.batch,
-                shuffle=True,
-                drop_last=False,
-                generator=dl_gen,
-            )
+    # Determine the number of pairs to train on per epoch
+    if args.balanced_sampling:
+        if args.pairs_per_epoch is None or args.pairs_per_epoch <= 0:
+            total_pairs_per_epoch = 1_000_000 # A reasonable default
         else:
-            ds = MultiDatasetAllPairs(train_entries)
-            # Optional uniform subsampling per epoch to limit compute
-            if args.pairs_per_epoch is not None and args.pairs_per_epoch > 0:
-                dl_gen = torch.Generator().manual_seed(args.seed + epoch)
-                sampler = torch.utils.data.RandomSampler(
-                    ds,
-                    replacement=True,
-                    num_samples=int(args.pairs_per_epoch),
-                    generator=dl_gen,
-                )
-                loader = torch.utils.data.DataLoader(
-                    ds,
-                    batch_size=args.batch,
-                    sampler=sampler,
-                    drop_last=False,
-                )
-            else:
-                dl_gen = torch.Generator().manual_seed(args.seed + epoch)
-                loader = torch.utils.data.DataLoader(
-                    ds,
-                    batch_size=args.batch,
-                    shuffle=True,
-                    drop_last=False,
-                    generator=dl_gen,
-                )
+            total_pairs_per_epoch = int(args.pairs_per_epoch)
+    else: # All-pairs mode
+        ds_all_pairs = MultiDatasetAllPairs(train_entries)
+        if args.pairs_per_epoch is not None and args.pairs_per_epoch > 0:
+            total_pairs_per_epoch = int(args.pairs_per_epoch)
+        else:
+            total_pairs_per_epoch = len(ds_all_pairs) # Use all pairs if not specified
 
+    # --- NEW: Define mining parameters ---
+    # We will mine from a pool 5x larger than our training set size for the epoch.
+    # This is a key hyperparameter you can tune.
+    mining_pool_size = total_pairs_per_epoch * 5
+    warmup_epochs = 5
+
+    for epoch in range(1, args.epochs + 1):
+        print(f"--- Epoch {epoch}/{args.epochs} ---")
+        current_lr = opt.param_groups[0]['lr']
+        print(f"Current LR: {current_lr:.6f}")
+        
+        if epoch <= warmup_epochs:
+            print(f"Warmup Epoch {epoch}/{warmup_epochs}. Using random sampling.")
+            # Create a DataLoader with purely random samples
+            random_ds = BalancedMultiDatasetPairs(train_entries, total_samples=total_pairs_per_epoch, seed=args.seed + epoch)
+            training_loader = torch.utils.data.DataLoader(random_ds, batch_size=args.batch, shuffle=True)
+
+        
+        else:
+            # =================================================================
+            # 1. MINE PHASE: Identify the hardest pairs for this epoch
+            # =================================================================
+            print(f"Mining from a pool of {mining_pool_size} pairs...")
+            model.eval() # Set model to evaluation mode for inference
+
+            # Create a large, random pool of pairs to mine from.
+            # The seed is varied each epoch to ensure we mine from a different pool.
+            mining_ds = BalancedMultiDatasetPairs(train_entries, total_samples=mining_pool_size, seed=args.seed + epoch + 1000)
+            mining_loader = torch.utils.data.DataLoader(mining_ds, batch_size=args.batch, shuffle=False)
+
+            # We need a separate loss function for mining that does NOT average the loss.
+            mining_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='none')
+
+            all_losses = []
+            with torch.no_grad():
+                for e1, e2, t in mining_loader:
+                    e1, e2, t = e1.to(device), e2.to(device), t.to(device)
+                    logits = model(e1, e2)
+                    per_sample_loss = mining_loss_fn(logits, t)
+                    all_losses.append(per_sample_loss.squeeze().cpu())
+
+            # Identify the indices of the hardest pairs from the mining pool
+            all_losses_tensor = torch.cat(all_losses)
+            num_hard_samples = total_pairs_per_epoch
+            hard_indices = torch.topk(all_losses_tensor, k=min(num_hard_samples, len(all_losses_tensor))).indices
+
+            # Create a new DataLoader that ONLY samples these hard pairs for training
+            hard_sampler = torch.utils.data.SubsetRandomSampler(hard_indices.tolist())
+            training_loader = torch.utils.data.DataLoader(mining_ds, batch_size=args.batch, sampler=hard_sampler)
+            print(f"Mining complete. Selected {len(hard_indices)} hard pairs for training.")
+
+        # =================================================================
+        # 2. TRAIN PHASE: Train ONLY on the hard pairs
+        # =================================================================
+        model.train() # Set model back to training mode
         run_loss, n_batches = 0.0, 0
-        for e1, e2, t in loader:
+        for e1, e2, t in training_loader:
             e1, e2, t = e1.to(device), e2.to(device), t.to(device)
             opt.zero_grad(set_to_none=True)
             logits = model(e1, e2)
-            loss = loss_fn(logits, t)
+            loss = loss_fn(logits, t) # This loss_fn correctly averages over the batch
             loss.backward()
             opt.step()
             run_loss += float(loss.detach().cpu())
@@ -620,7 +658,9 @@ def main():
 
         train_loss = run_loss / max(1, n_batches)
 
-        # Evaluate
+        # =================================================================
+        # 3. EVALUATION, LOGGING, and SCHEDULER STEP (Unchanged)
+        # =================================================================
         model.eval()
         train_per_acc = {}
         for entry in train_entries:
